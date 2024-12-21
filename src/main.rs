@@ -9,7 +9,7 @@ struct TitleState(String);
 
 #[derive(serde::Deserialize)]
 struct DogApi {
-	message: String,
+    message: String,
 }
 
 
@@ -64,7 +64,9 @@ fn DogView() -> Element {
                     img_src.restart();
 
                     // And call the `save_dog` server function
-                    save_dog(current).await;
+                    if let Err(e) = save_dog(current).await {
+                        eprintln!("Failed to save dog: {:?}", e);
+                    }
                 },
                 "save!"
             }
@@ -74,7 +76,7 @@ fn DogView() -> Element {
 
 // Expose a `save_dog` endpoint on our server that takes an "image" parameter
 #[server]
-async fn save_dog(image: String) -> Result<(), ServerFnError> {
+async fn save_dog(image: String) -> Result<(), ServerFnError<String>> {
     use std::io::Write;
 
     // Open the `dogs.txt` file in append-only mode, creating it if it doesn't exist;
@@ -86,7 +88,8 @@ async fn save_dog(image: String) -> Result<(), ServerFnError> {
         .unwrap();
 
     // And then write a newline to it with the image url
-    file.write_fmt(format_args!("{image}\n"));
+    file.write_fmt(format_args!("{image}\n"))
+        .map_err(|err| ServerFnError::ServerError(err.to_string()))?;
 
     Ok(())
 }
