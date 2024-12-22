@@ -2,6 +2,7 @@ use dioxus::prelude::*;
 use env_logger;
 use surrealdb::Surreal;
 use surrealdb::engine::local::Db;
+use std::sync::Once;
 
 static CSS: Asset = asset!("/assets/main.css");
 
@@ -13,7 +14,6 @@ struct TitleState(String);
 struct DogApi {
     message: String,
 }
-
 
 fn main() {
     env_logger::init();
@@ -76,22 +76,34 @@ fn DogView() -> Element {
     }
 }
 
-// Expose a `save_dog` endpoint on our server that takes an "image" parameter
 #[server]
 async fn save_dog(image: String) -> Result<(), ServerFnError<String>> {
-    use std::io::Write;
+    let db = get_db();
 
-    // Open the `dogs.txt` file in append-only mode, creating it if it doesn't exist;
-    let mut file = std::fs::OpenOptions::new()
-        .write(true)
-        .append(true)
-        .create(true)
-        .open("dogs.txt")
-        .unwrap();
-
-    // And then write a newline to it with the image url
-    file.write_fmt(format_args!("{image}\n"))
+    // Insert the dog image URL into the "dogs" table
+    db.create::<Option<serde_json::Value>>("dogs") // Return type as `Option<serde_json::Value>`
+        .content(serde_json::json!({
+            "url": image, // Insert the URL field
+        }))
+        .await
         .map_err(|err| ServerFnError::ServerError(err.to_string()))?;
 
     Ok(())
+}
+
+pub fn get_db() -> &'static Surreal<Db> {
+    static mut DB: Option<Surreal<Db>> = None;
+    static INIT: Once = Once::new();
+
+    unsafe {
+        INIT.call_once(|| {
+            let db = Surreal::init(); // Initialize the database
+            println!("SurrealDB initialized");
+
+            DB = Some(db);
+            println!("Database ready for use");
+        });
+
+        DB.as_ref().expect("Database not initialized")
+    }
 }
