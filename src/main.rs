@@ -1,5 +1,7 @@
 use dioxus::prelude::*;
 use env_logger;
+use surrealdb::Surreal;
+use surrealdb::engine::local::Db;
 
 static CSS: Asset = asset!("/assets/main.css");
 

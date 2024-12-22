@@ -12,14 +12,14 @@ log = "0.4"
 env_logger = "0.11"
 reqwest = { version = "0.12.9", features = ["json"] }
 serde = { version = "1.0.216", features = ["derive"] }
-surrealdb = { version = "2.1.4", features = ["kv-mem"], optional = true }
+surrealdb = { version = "2.1.4", features = ["kv-mem"]}
 
 [features]
 default = ["web"]
 web = ["dioxus/web"]
 desktop = ["dioxus/desktop"]
 mobile = ["dioxus/mobile"]
-server = ["dioxus/server", "dep:surrealdb"]
+server = ["dioxus/server"]
 
 [profile]
 
