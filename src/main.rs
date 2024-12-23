@@ -1,10 +1,17 @@
 use dioxus::prelude::*;
 use env_logger;
+use log::{error, info};
 use surrealdb::Surreal;
-use surrealdb::engine::local::Db;
-use std::sync::Once;
+use surrealdb::engine::local::{Db, Mem};
+use surrealdb::Error as SurrealError;
+use thiserror::Error;
+use futures::executor::block_on;
+use once_cell::sync::OnceCell;
 
 static CSS: Asset = asset!("/assets/main.css");
+
+// Replace `static mut` with `OnceCell`
+static DB: OnceCell<Surreal<Db>> = OnceCell::new();
 
 // Create a new wrapper type.
 #[derive(Clone)]
@@ -15,14 +22,33 @@ struct DogApi {
     message: String,
 }
 
+// Define a custom error type
+#[derive(Error, Debug)]
+pub enum AppError {
+    #[error("Failed to initialize the database: {0}")]
+    DatabaseInitError(String),
+    #[error("Database operation failed: {0}")]
+    DatabaseOpError(String),
+    #[error("HTTP request failed: {0}")]
+    HttpRequestError(String),
+    #[error("Unexpected error: {0}")]
+    UnexpectedError(String),
+}
+
+impl From<SurrealError> for AppError {
+    fn from(err: SurrealError) -> Self {
+        AppError::DatabaseOpError(err.to_string())
+    }
+}
+
 fn main() {
     env_logger::init();
+    info!("Starting HotDog application");
     dioxus::launch(App);
 }
 
 #[component]
 fn App() -> Element {
-    // Provide that type as a Context
     use_context_provider(|| TitleState("HotDog".to_string()));
     rsx! {
         document::Stylesheet { href: CSS }
@@ -33,7 +59,6 @@ fn App() -> Element {
 
 #[component]
 fn Title() -> Element {
-    // Consume that type as a Context
     let title = use_context::<TitleState>();
     rsx! {
         h1 { "{title.0}" }
@@ -43,13 +68,19 @@ fn Title() -> Element {
 #[component]
 fn DogView() -> Element {
     let mut img_src = use_resource(|| async move {
-        reqwest::get("https://dog.ceo/api/breeds/image/random")
-            .await
-            .unwrap()
-            .json::<DogApi>()
-            .await
-            .unwrap()
-            .message
+        match reqwest::get("https://dog.ceo/api/breeds/image/random").await {
+            Ok(resp) => match resp.json::<DogApi>().await {
+                Ok(data) => data.message,
+                Err(err) => {
+                    error!("Failed to parse dog image response: {}", err);
+                    String::new()
+                }
+            },
+            Err(err) => {
+                error!("Failed to fetch dog image: {}", err);
+                String::new()
+            }
+        }
     });
 
     rsx! {
@@ -59,15 +90,11 @@ fn DogView() -> Element {
         div { id: "buttons",
              button {
                 onclick: move |_| async move {
-                    // Clone the current image
                     let current = img_src.cloned().unwrap();
-
-                    // Start fetching a new image
                     img_src.restart();
 
-                    // And call the `save_dog` server function
                     if let Err(e) = save_dog(current).await {
-                        eprintln!("Failed to save dog: {:?}", e);
+                        error!("Failed to save dog: {:?}", e);
                     }
                 },
                 "save!"
@@ -79,31 +106,44 @@ fn DogView() -> Element {
 #[server]
 async fn save_dog(image: String) -> Result<(), ServerFnError<String>> {
     let db = get_db();
+    info!("Attempting to save dog URL: {}", image);
 
-    // Insert the dog image URL into the "dogs" table
-    db.create::<Option<serde_json::Value>>("dogs") // Return type as `Option<serde_json::Value>`
+    db.create::<Option<surrealdb::Value>>("dogs")
         .content(serde_json::json!({
-            "url": image, // Insert the URL field
+            "url": image,
         }))
         .await
-        .map_err(|err| ServerFnError::ServerError(err.to_string()))?;
+        .map_err(|err| {
+            error!("Failed to save dog URL to database: {}", err);
+            ServerFnError::ServerError(format!("Database error: {}", err))
+        })?;
+
+    info!("Successfully saved dog URL: {}", image);
 
     Ok(())
 }
 
+
 pub fn get_db() -> &'static Surreal<Db> {
-    static mut DB: Option<Surreal<Db>> = None;
-    static INIT: Once = Once::new();
+    DB.get_or_init(|| {
+        let db = Surreal::<Db>::init(); // Explicitly specify `Surreal<Db>`
+        log::info!("SurrealDB initialized");
 
-    unsafe {
-        INIT.call_once(|| {
-            let db = Surreal::init(); // Initialize the database
-            println!("SurrealDB initialized");
-
-            DB = Some(db);
-            println!("Database ready for use");
+        block_on(async {
+            db.connect::<Mem>(()) // Use `Mem` explicitly for the in-memory database
+                .await
+                .expect("Failed to connect to in-memory database");
         });
 
-        DB.as_ref().expect("Database not initialized")
-    }
+        log::info!("Connected to in-memory database");
+
+        block_on(async {
+            db.query("DEFINE TABLE dogs SCHEMAFULL;")
+                .await
+                .expect("Failed to define schema");
+        });
+
+        log::info!("Database schema initialized");
+        db
+    })
 }

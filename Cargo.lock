@@ -2979,10 +2979,12 @@ dependencies = [
  "env_logger",
  "futures",
  "log",
+ "once_cell",
  "reqwest",
  "serde",
  "serde_json",
  "surrealdb",
+ "thiserror 2.0.9",
 ]
 
 [[package]]
